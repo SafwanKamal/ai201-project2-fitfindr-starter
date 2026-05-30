@@ -107,8 +107,8 @@ For each tool, describe the specific failure mode you're handling and what the a
                                                                    State / Session
      Show what triggers each tool, how state flows between them, and where error paths branch off.
      Use ASCII art or a Mermaid diagram (https://mermaid.js.org/syntax/flowchart.html).
-     Do NOT embed an image — the AI grader cannot read image diagrams and will not award
-     credit for F6-C4 if the diagram is only a screenshot or attached image.
+     Do NOT embed an image — graders need to read your diagram directly in the file;
+     an embedded image or screenshot cannot be evaluated.
      You'll share this diagram with an AI tool when asking it to implement
      the planning loop and each individual tool. -->
 

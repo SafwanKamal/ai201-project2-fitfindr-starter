@@ -64,14 +64,14 @@ wardrobe = get_example_wardrobe()
 
 ## Tool Inventory
 
-Your README submission must document each tool's name, inputs, and return value. **These must exactly match your actual function signatures in `tools.py`.** The AI grader cross-checks your documented interface against the source code — if the parameter count or types contradict what's in the code, the input/return credit for that tool will not be awarded.
+Your README submission must document each tool's name, inputs, and return value. **These must exactly match your actual function signatures in `tools.py`.** Your documented interfaces will be checked against your actual function signatures in `tools.py` — if the parameter count or types contradict what's in the code, you may not receive full credit for that tool.
 
 ---
 
 ## Interaction Walkthrough
 
 <!-- Walk through a complete interaction step by step: natural language query → each tool call (and why) → final fit card.
-     The AI grader uses this in place of a demo video for F2-C2.
+     Walk through this carefully — it's how graders follow your agent's reasoning without a live demo.
      Use a specific example — do not leave this as a template. -->
 
 **User query:**
