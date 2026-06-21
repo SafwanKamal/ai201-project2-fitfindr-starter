@@ -150,12 +150,4 @@ The proposed prompt-only correction was not strong enough by itself, so I added 
 
 **One divergence from the spec, and why:** The walkthrough's illustrative `Faded Band Tee` result does not exist under that exact title/price/size combination in the supplied dataset, so the live run correctly selected the highest-scoring real record (`Y2K Baby Tee — Butterfly Print`) instead of hardcoding the example. I also made incomplete fit-card input use a recognizable `Error:` prefix so the string-returning tool and planning loop can distinguish validation failure from a caption without changing the required function signature.
 
-## Demo Video Outline (3–5 Minutes)
 
-1. **0:00–0:30 — Setup:** Show `python app.py`, open the printed URL, and explain the query and wardrobe controls.
-2. **0:30–2:15 — Happy path:** Submit `vintage graphic tee under $30` with **Example wardrobe**. Narrate parsing, ranked search, `selected_item`, wardrobe-aware outfit generation, and the saved outfit flowing into fit-card generation. Show all three populated panels.
-3. **2:15–3:00 — State passing:** Briefly show `agent.py` or the printed session and point out `search_results[0] → selected_item → suggest_outfit`, then `outfit_suggestion → create_fit_card`, with the same listing reused rather than re-prompted or hardcoded.
-4. **3:00–4:00 — Failure branch:** Submit `designer ballgown size XXS under $5`. Show the actionable error in the first panel and explain that the empty downstream panels demonstrate the two later tools were skipped.
-5. **4:00–4:30 — Wrap-up:** Mention the 28 passing tests and that an empty wardrobe gives hypothetical general advice rather than inventing ownership.
-
-Record the video with your course-approved screen recorder while narrating these steps, then attach or link the resulting video wherever your submission system requires. Do not commit API keys or private sharing URLs to the repository.
