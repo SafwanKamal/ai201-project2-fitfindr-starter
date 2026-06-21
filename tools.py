@@ -13,6 +13,7 @@ Tools:
 """
 
 import os
+import re
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -20,6 +21,16 @@ from groq import Groq
 from utils.data_loader import load_listings
 
 load_dotenv()
+
+_GENERAL_STYLING_PREFIX = "General styling idea (no wardrobe items provided):"
+_OWNERSHIP_CLAIM_PATTERN = re.compile(
+    r"\b(?:i(?:\s+|['’])(?:paired|styled|wore|wear|rocked|matched|teamed|"
+    r"am\s+wearing|m\s+wearing|have\s+paired|have\s+styled|ve\s+paired|"
+    r"ve\s+styled)|(?:my|your)\s+(?:[a-z-]+\s+){0,3}(?:jeans|pants|"
+    r"trousers|skirt|shorts|shoes|sneakers|boots|sandals|cardigan|jacket|hoodie|coat|"
+    r"bag|belt|necklace))\b",
+    re.IGNORECASE,
+)
 
 
 # ── Groq client ───────────────────────────────────────────────────────────────
@@ -31,7 +42,7 @@ def _get_groq_client():
         raise ValueError(
             "GROQ_API_KEY not set. Add it to a .env file in the project root."
         )
-    return Groq(api_key=api_key)
+    return Groq(api_key=api_key, timeout=20.0, max_retries=0)
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
@@ -69,8 +80,36 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    query_terms = set(re.findall(r"[a-z0-9]+", description.lower()))
+    if not query_terms:
+        return []
+
+    scored_listings: list[tuple[int, dict]] = []
+
+    for listing in load_listings():
+        if max_price is not None and listing["price"] > max_price:
+            continue
+        if size is not None and size.strip().lower() not in listing["size"].lower():
+            continue
+
+        searchable_values = [
+            listing["title"],
+            listing["description"],
+            listing["category"],
+            *listing["style_tags"],
+            *listing["colors"],
+            listing["brand"] or "",
+            listing["platform"],
+        ]
+        searchable_terms = set(
+            re.findall(r"[a-z0-9]+", " ".join(searchable_values).lower())
+        )
+        relevance = len(query_terms & searchable_terms)
+        if relevance > 0:
+            scored_listings.append((relevance, listing))
+
+    scored_listings.sort(key=lambda result: result[0], reverse=True)
+    return [listing for _, listing in scored_listings]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +139,89 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    wardrobe_items = wardrobe.get("items", [])
+    item_summary = (
+        f"{new_item.get('title', 'Unnamed item')} | "
+        f"category: {new_item.get('category', 'unknown')} | "
+        f"colors: {', '.join(new_item.get('colors', [])) or 'unknown'} | "
+        f"style: {', '.join(new_item.get('style_tags', [])) or 'unspecified'}"
+    )
+
+    if wardrobe_items:
+        formatted_wardrobe = "\n".join(
+            (
+                f"- {item.get('name', 'Unnamed piece')} "
+                f"({item.get('category', 'unknown')}; "
+                f"colors: {', '.join(item.get('colors', [])) or 'unknown'}; "
+                f"style: {', '.join(item.get('style_tags', [])) or 'unspecified'}; "
+                f"notes: {item.get('notes') or 'none'})"
+            )
+            for item in wardrobe_items
+        )
+        prompt = f"""You are FitFindr, a practical personal stylist.
+
+New thrifted item:
+{item_summary}
+
+Pieces the user already owns:
+{formatted_wardrobe}
+
+Suggest one or two complete outfits that feature the new item and use specific
+pieces from the wardrobe by their exact names. Explain briefly why the pieces
+work together and include one concrete styling detail such as layering,
+cuffing, or tucking. Keep the answer concise and do not invent wardrobe items."""
+    else:
+        prompt = f"""You are FitFindr, a practical personal stylist.
+
+New thrifted item:
+{item_summary}
+
+The user has not added any wardrobe pieces yet. Give one or two concise,
+general outfit ideas by naming the types, colors, and silhouettes of bottoms,
+shoes, layers, or accessories that would pair well with the new item. Describe
+the overall vibe and include one concrete styling detail. Do not imply that the
+user already owns any of the suggested pieces. Use hypothetical language such
+as "could pair," "would work with," or "I'd style it with." Never claim "I
+paired it with," "I wore it with," or refer to "my jeans" or "my shoes."""
+
+    client = _get_groq_client()
+    messages = [{"role": "user", "content": prompt}]
+    attempts = 1 if wardrobe_items else 2
+
+    for attempt in range(attempts):
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=350,
+        )
+        suggestion = response.choices[0].message.content
+        if not suggestion or not suggestion.strip():
+            raise ValueError("Groq returned an empty outfit suggestion.")
+        suggestion = suggestion.strip()
+
+        if wardrobe_items:
+            return suggestion
+        if not _OWNERSHIP_CLAIM_PATTERN.search(suggestion):
+            return f"{_GENERAL_STYLING_PREFIX}\n{suggestion}"
+
+        if attempt == 0:
+            messages.extend(
+                [
+                    {"role": "assistant", "content": suggestion},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Rewrite this as a hypothetical styling idea. The "
+                            "wardrobe is empty, so do not say I paired, wore, or "
+                            "own any supporting clothes, and do not refer to my "
+                            "or your jeans, shoes, layers, or accessories."
+                        ),
+                    },
+                ]
+            )
+
+    raise ValueError("Outfit suggestion incorrectly implied wardrobe ownership.")
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +253,77 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    if (
+        not isinstance(outfit, str)
+        or not outfit.strip()
+        or not isinstance(new_item, dict)
+        or not new_item.get("title")
+        or new_item.get("price") is None
+        or not new_item.get("platform")
+    ):
+        return (
+            "Error: Cannot create fit card without a complete outfit, title, "
+            "price, and platform."
+        )
+
+    general_styling = outfit.strip().startswith(_GENERAL_STYLING_PREFIX)
+    wardrobe_context = (
+        "The user provided an empty wardrobe. Every supporting garment in the "
+        "outfit idea is hypothetical: use phrases such as 'I'd style it with' "
+        "or 'would look great with.' Never say 'I paired it with,' 'I wore it "
+        "with,' 'I'm wearing,' or call a supporting garment 'my jeans/shoes/etc.'"
+        if general_styling
+        else "The outfit uses pieces from the user's provided wardrobe."
+    )
+    prompt = f"""You write casual, authentic social captions for FitFindr.
+
+Thrifted item: {new_item['title']}
+Price: ${new_item['price']:g}
+Platform: {new_item['platform']}
+Outfit idea: {outfit.strip()}
+Wardrobe context: {wardrobe_context}
+
+Write one shareable Instagram or TikTok caption of 2 to 4 sentences. Mention
+the exact item title, price, and platform naturally exactly once each. Capture
+the outfit's specific vibe and styling details. Sound like a real OOTD post,
+not an advertisement or product description. Do not claim the user has already
+worn an outfit unless the wardrobe context explicitly supports that claim. A
+restrained emoji is welcome.
+Return only the caption with no heading, quotation marks, or explanation."""
+
+    client = _get_groq_client()
+    messages = [{"role": "user", "content": prompt}]
+    attempts = 2 if general_styling else 1
+
+    for attempt in range(attempts):
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            temperature=1.1,
+            max_tokens=220,
+        )
+        caption = response.choices[0].message.content
+        if not caption or not caption.strip():
+            return "Error: The fit card generator returned an empty caption."
+        caption = caption.strip()
+
+        if not general_styling or not _OWNERSHIP_CLAIM_PATTERN.search(caption):
+            return caption
+
+        if attempt == 0:
+            messages.extend(
+                [
+                    {"role": "assistant", "content": caption},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Rewrite the caption. The wardrobe is empty, so the "
+                            "supporting clothes are only suggestions. Use "
+                            "hypothetical wording such as 'I'd style it with' and "
+                            "remove every claim that I paired, wore, or own them."
+                        ),
+                    },
+                ]
+            )
+
+    return "Error: The fit card incorrectly implied ownership of suggested items."

@@ -18,6 +18,8 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import re
+
 from tools import search_listings, suggest_outfit, create_fit_card
 
 
@@ -46,6 +48,59 @@ def _new_session(query: str, wardrobe: dict) -> dict:
 
 
 # ── planning loop ─────────────────────────────────────────────────────────────
+
+_PRICE_PATTERN = re.compile(
+    r"\b(?:under|below|less\s+than|max(?:imum)?(?:\s+price)?(?:\s+of)?)"
+    r"\s*\$?\s*(\d+(?:\.\d{1,2})?)\b",
+    re.IGNORECASE,
+)
+_SIZE_PATTERN = re.compile(
+    r"(?:\bin\s+)?\bsize\s+"
+    r"((?:US|UK|EU)\s*\d+(?:\.\d+)?|XXS|XS|S|M|L|XL|XXL|"
+    r"\d+(?:\.\d+)?)\b",
+    re.IGNORECASE,
+)
+_REQUEST_PREFIX_PATTERN = re.compile(
+    r"^(?:(?:i['’]?m|i\s+am)\s+)?(?:looking|searching)\s+for\s+"
+    r"(?:(?:a|an|some)\s+)?|^find\s+me\s+(?:(?:a|an|some)\s+)?",
+    re.IGNORECASE,
+)
+
+
+def _parse_query(query: str) -> dict:
+    """Extract search arguments from the first shopping-request sentence."""
+    search_clause = re.split(r"[.!?](?:\s+|$)", query.strip(), maxsplit=1)[0]
+
+    price_match = _PRICE_PATTERN.search(search_clause)
+    max_price = float(price_match.group(1)) if price_match else None
+
+    size_match = _SIZE_PATTERN.search(search_clause)
+    size = re.sub(r"\s+", " ", size_match.group(1)).upper() if size_match else None
+
+    description = _PRICE_PATTERN.sub(" ", search_clause)
+    description = _SIZE_PATTERN.sub(" ", description)
+    description = _REQUEST_PREFIX_PATTERN.sub("", description)
+    description = re.sub(r"\s+", " ", description).strip(" ,;:-")
+
+    return {
+        "description": description,
+        "size": size,
+        "max_price": max_price,
+    }
+
+
+def _no_results_message(parsed: dict) -> str:
+    """Build an actionable no-results message from the attempted filters."""
+    constraints = []
+    if parsed["size"] is not None:
+        constraints.append(f"in size {parsed['size']}")
+    if parsed["max_price"] is not None:
+        constraints.append(f"under ${parsed['max_price']:g}")
+    attempted_filters = f" {' '.join(constraints)}" if constraints else ""
+    return (
+        f"No listings matched '{parsed['description']}'{attempted_filters}. "
+        "Try a broader description, another size, or a higher price limit."
+    )
 
 def run_agent(query: str, wardrobe: dict) -> dict:
     """
@@ -92,9 +147,74 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    if not isinstance(query, str) or not query.strip():
+        session["error"] = (
+            "Tell me what item you're looking for—for example, "
+            "'vintage graphic tee under $30, size M'."
+        )
+        return session
+
+    session["parsed"] = _parse_query(query)
+    if not session["parsed"]["description"]:
+        session["error"] = (
+            "Tell me what kind of item you want, such as 'graphic tee' or "
+            "'combat boots'."
+        )
+        return session
+
+    try:
+        session["search_results"] = search_listings(**session["parsed"])
+    except Exception:
+        session["error"] = (
+            "I couldn't search the listings right now. Please try again."
+        )
+        return session
+
+    if not session["search_results"]:
+        session["error"] = _no_results_message(session["parsed"])
+        return session
+
+    session["selected_item"] = session["search_results"][0]
+
+    try:
+        outfit = suggest_outfit(session["selected_item"], session["wardrobe"])
+    except Exception:
+        session["error"] = (
+            "I found a listing, but couldn't create an outfit suggestion. "
+            "Try again, or add a few wardrobe pieces with colors and categories."
+        )
+        return session
+
+    if not isinstance(outfit, str) or not outfit.strip():
+        session["error"] = (
+            "I found a listing, but couldn't create an outfit suggestion. "
+            "Try again, or add a few wardrobe pieces with colors and categories."
+        )
+        return session
+    session["outfit_suggestion"] = outfit.strip()
+
+    try:
+        fit_card = create_fit_card(
+            session["outfit_suggestion"], session["selected_item"]
+        )
+    except Exception:
+        fit_card = ""
+
+    if (
+        not isinstance(fit_card, str)
+        or not fit_card.strip()
+        or fit_card.strip().lower().startswith("error:")
+    ):
+        session["error"] = (
+            "Your outfit idea is ready, but I couldn't create the fit card because "
+            "the outfit or listing details were incomplete. You can still use the "
+            "outfit suggestion above, or try generating the card again."
+        )
+        return session
+
+    session["fit_card"] = fit_card.strip()
     return session
 
 
@@ -121,3 +241,4 @@ if __name__ == "__main__":
         wardrobe=get_example_wardrobe(),
     )
     print(f"Error message: {session2['error']}")
+    print(f"Fit card: {session2['fit_card']}")
